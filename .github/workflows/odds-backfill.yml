@@ -1,5 +1,6 @@
 name: odds-backfill
-# 過去の締切時オッズ(2連単/2連複)。scripts/odds_backfill_request.txt の期間を月単位で取得。
+# 過去の締切時オッズ(2連単/2連複)。scripts/odds_backfill_request.txt の期間を7日単位で取得。
+# 1ページ約10秒のため、7日(約1,200レース)で約4時間。1ジョブ6時間の上限に収める。
 on:
   push:
     branches: [boatrace-probe]
@@ -11,52 +12,49 @@ jobs:
   plan:
     runs-on: ubuntu-latest
     outputs:
-      months: ${{ steps.m.outputs.months }}
+      weeks: ${{ steps.m.outputs.weeks }}
     steps:
       - uses: actions/checkout@v4
       - id: m
         run: |
           s=$(grep '^start=' scripts/odds_backfill_request.txt | cut -d= -f2)
           e=$(grep '^end=' scripts/odds_backfill_request.txt | cut -d= -f2)
-          ms=()
-          cur=$(date -d "${s:0:7}-01" +%F)
+          ws=()
+          cur="$s"
           while [[ "$cur" < "$e" || "$cur" == "$e" ]]; do
-            ym=$(date -d "$cur" +%Y%m)
-            [[ -f "data/odds_final/$ym.tar.age" ]] || ms+=("\"$ym\"")
-            cur=$(date -d "$cur +1 month" +%F)
+            w=$(date -d "$cur" +%Y%m%d)
+            [[ -f "data/odds_final/$w.tar.age" ]] || ws+=("\"$w\"")
+            cur=$(date -d "$cur +7 day" +%F)
           done
-          echo "months=[$(IFS=,; echo "${ms[*]}")]" >> "$GITHUB_OUTPUT"
-  month:
+          echo "weeks=[$(IFS=,; echo "${ws[*]}")]" >> "$GITHUB_OUTPUT"
+  week:
     needs: plan
-    if: needs.plan.outputs.months != '[]'
+    if: needs.plan.outputs.weeks != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 355
     strategy:
       max-parallel: 3
       fail-fast: false
       matrix:
-        ym: ${{ fromJson(needs.plan.outputs.months) }}
+        w: ${{ fromJson(needs.plan.outputs.weeks) }}
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq age && pip install -q beautifulsoup4 lxml
       - name: fetch
         run: |
-          ym=${{ matrix.ym }}
-          s="${ym:0:4}-${ym:4:2}-01"; e=$(date -d "$s +1 month -1 day" +%F)
+          w=${{ matrix.w }}
+          s="${w:0:4}-${w:4:2}-${w:6:2}"; e=$(date -d "$s +6 day" +%F)
           lim=$(grep '^end=' scripts/odds_backfill_request.txt | cut -d= -f2)
           [[ "$e" > "$lim" ]] && e="$lim"
           mkdir -p tmp
-          # 1か月(約5,000レース×10秒)は6時間に収まらないので前半/後半を別ジョブにせず、
-          # 5時間50分で打ち切って途中まで保存し、次回の実行で続きから取る
-          timeout 20700 python3 scripts/odds_backfill.py "$s" "$e" tmp || true
+          timeout 20700 python3 scripts/odds_backfill.py "$s" "$e" tmp && touch tmp/COMPLETE || true
       - name: save
         if: always()
         run: |
-          ym=${{ matrix.ym }}
+          w=${{ matrix.w }}
           [ -n "$(ls tmp/*.jsonl 2>/dev/null)" ] || exit 0
           n=$(cat tmp/*.jsonl | wc -l)
           gzip -9 tmp/*.jsonl
-          # 完了した月だけ最終ファイル名にする(途中なら part として保存)
-          last=$(date -d "${ym:0:4}-${ym:4:2}-01 +1 month -1 day" +%Y%m%d)
-          if zcat tmp/*.jsonl.gz | grep -q "\"hd\": \"$last\""; then dest="data/odds_final/$ym.tar.age"; else dest="data/odds_final/part/$ym-$(date +%s).tar.age"; fi
-          ./scripts/pack_and_push.sh tmp "$dest" "odds_final $ym ($n rows)"
+          # 最後まで取れた週だけ確定名にする。途中なら part として保存し、次回は最初から取り直す
+          if [ -f tmp/COMPLETE ]; then dest="data/odds_final/$w.tar.age"; else dest="data/odds_final/part/$w-$(date +%s).tar.age"; fi
+          ./scripts/pack_and_push.sh tmp "$dest" "odds_final $w ($n rows)"
