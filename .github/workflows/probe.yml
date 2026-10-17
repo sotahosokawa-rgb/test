@@ -1,0 +1,33 @@
+name: probe
+on:
+  push:
+    branches: [boatrace-probe]
+    paths: [.github/workflows/probe.yml]
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: probe
+        run: |
+          {
+            echo "date: $(date -u +%FT%TZ)"
+            for u in \
+              https://www1.mbrace.or.jp/od2/K/202409/k240901.lzh \
+              https://www1.mbrace.or.jp/od2/B/202409/b240901.lzh \
+              "https://www.boatrace.jp/owpc/pc/race/odds3t?rno=12&jcd=01&hd=20250101" \
+              "https://www.boatrace.jp/owpc/pc/race/raceindex?jcd=01&hd=20250101"; do
+              echo "$(curl -sS -o /dev/null -A 'Mozilla/5.0' -w '%{http_code} %{size_download}' --max-time 30 "$u" 2>&1) $u"
+              sleep 2
+            done
+          } > probe_result.txt
+          cat probe_result.txt
+      - name: save
+        run: |
+          git config user.name "probe-bot"
+          git config user.email "probe-bot@users.noreply.github.com"
+          git add probe_result.txt
+          git commit -m "probe result [skip ci]" || true
+          git push
