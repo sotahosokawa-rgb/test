@@ -1,0 +1,35 @@
+name: daily
+on:
+  schedule:
+    - cron: "30 15 * * *"   # 00:30 JST
+    - cron: "30 21 * * *"   # 06:30 JST (再試行)
+  push:
+    branches: [boatrace-probe]
+    paths: [.github/workflows/daily.yml]
+permissions:
+  contents: write
+concurrency: data-writer
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+      - name: fetch recent days
+        run: |
+          # JST基準: 成績は前日と前々日、出走表は当日と翌日
+          for off in 2 1; do
+            d=$(TZ=Asia/Tokyo date -d "-$off day" +%F); dest="data/daily/K/$(date -d $d +%Y%m%d).tar.age"
+            [[ -f "$dest" ]] && continue
+            rm -rf tmp && mkdir tmp && python3 scripts/fetch_lzh.py "$d" "$d" tmp
+            rm -f tmp/b*.lzh
+            ls tmp/k*.lzh >/dev/null 2>&1 && ./scripts/pack_and_push.sh tmp "$dest" "daily K $d"
+          done
+          for off in 0 1; do
+            d=$(TZ=Asia/Tokyo date -d "+$off day" +%F); dest="data/daily/B/$(date -d $d +%Y%m%d).tar.age"
+            [[ -f "$dest" ]] && continue
+            rm -rf tmp && mkdir tmp && python3 scripts/fetch_lzh.py "$d" "$d" tmp
+            rm -f tmp/k*.lzh
+            ls tmp/b*.lzh >/dev/null 2>&1 && ./scripts/pack_and_push.sh tmp "$dest" "daily B $d"
+          done
