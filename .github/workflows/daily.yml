@@ -24,12 +24,12 @@ jobs:
             [[ -f "$dest" ]] && continue
             rm -rf tmp && mkdir tmp && python3 scripts/fetch_lzh.py "$d" "$d" tmp
             rm -f tmp/b*.lzh
-            ls tmp/k*.lzh >/dev/null 2>&1 && ./scripts/pack_and_push.sh tmp "$dest" "daily K $d"
+            if ls tmp/k*.lzh >/dev/null 2>&1; then ./scripts/pack_and_push.sh tmp "$dest" "daily K $d"; fi
           done
           for off in 0 1; do
             d=$(TZ=Asia/Tokyo date -d "+$off day" +%F); dest="data/daily/B/$(date -d $d +%Y%m%d).tar.age"
             [[ -f "$dest" ]] && continue
             rm -rf tmp && mkdir tmp && python3 scripts/fetch_lzh.py "$d" "$d" tmp
             rm -f tmp/k*.lzh
-            ls tmp/b*.lzh >/dev/null 2>&1 && ./scripts/pack_and_push.sh tmp "$dest" "daily B $d"
+            if ls tmp/b*.lzh >/dev/null 2>&1; then ./scripts/pack_and_push.sh tmp "$dest" "daily B $d"; fi
           done
