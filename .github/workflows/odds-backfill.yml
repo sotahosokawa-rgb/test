@@ -1,0 +1,62 @@
+name: odds-backfill
+# 過去の締切時オッズ(2連単/2連複)。scripts/odds_backfill_request.txt の期間を月単位で取得。
+on:
+  push:
+    branches: [boatrace-probe]
+    paths: [scripts/odds_backfill_request.txt]
+permissions:
+  contents: write
+concurrency: odds-backfill
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      months: ${{ steps.m.outputs.months }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        run: |
+          s=$(grep '^start=' scripts/odds_backfill_request.txt | cut -d= -f2)
+          e=$(grep '^end=' scripts/odds_backfill_request.txt | cut -d= -f2)
+          ms=()
+          cur=$(date -d "${s:0:7}-01" +%F)
+          while [[ "$cur" < "$e" || "$cur" == "$e" ]]; do
+            ym=$(date -d "$cur" +%Y%m)
+            [[ -f "data/odds_final/$ym.tar.age" ]] || ms+=("\"$ym\"")
+            cur=$(date -d "$cur +1 month" +%F)
+          done
+          echo "months=[$(IFS=,; echo "${ms[*]}")]" >> "$GITHUB_OUTPUT"
+  month:
+    needs: plan
+    if: needs.plan.outputs.months != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      max-parallel: 3
+      fail-fast: false
+      matrix:
+        ym: ${{ fromJson(needs.plan.outputs.months) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age && pip install -q beautifulsoup4 lxml
+      - name: fetch
+        run: |
+          ym=${{ matrix.ym }}
+          s="${ym:0:4}-${ym:4:2}-01"; e=$(date -d "$s +1 month -1 day" +%F)
+          lim=$(grep '^end=' scripts/odds_backfill_request.txt | cut -d= -f2)
+          [[ "$e" > "$lim" ]] && e="$lim"
+          mkdir -p tmp
+          # 1か月(約5,000レース×10秒)は6時間に収まらないので前半/後半を別ジョブにせず、
+          # 5時間50分で打ち切って途中まで保存し、次回の実行で続きから取る
+          timeout 20700 python3 scripts/odds_backfill.py "$s" "$e" tmp || true
+      - name: save
+        if: always()
+        run: |
+          ym=${{ matrix.ym }}
+          [ -n "$(ls tmp/*.jsonl 2>/dev/null)" ] || exit 0
+          n=$(cat tmp/*.jsonl | wc -l)
+          gzip -9 tmp/*.jsonl
+          # 完了した月だけ最終ファイル名にする(途中なら part として保存)
+          last=$(date -d "${ym:0:4}-${ym:4:2}-01 +1 month -1 day" +%Y%m%d)
+          if zcat tmp/*.jsonl.gz | grep -q "\"hd\": \"$last\""; then dest="data/odds_final/$ym.tar.age"; else dest="data/odds_final/part/$ym-$(date +%s).tar.age"; fi
+          ./scripts/pack_and_push.sh tmp "$dest" "odds_final $ym ($n rows)"
