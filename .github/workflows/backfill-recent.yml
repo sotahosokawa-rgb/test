@@ -1,0 +1,37 @@
+name: backfill-recent
+on:
+  push:
+    branches: [boatrace-probe]
+    paths: [scripts/backfill_request_recent.txt]
+permissions:
+  contents: write
+concurrency: data-writer-recent
+jobs:
+  year:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      max-parallel: 2
+      fail-fast: false
+      matrix:
+        year: [2026, 2025, 2024, 2023, 2022, 2021]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+      - name: fetch and pack each month
+        run: |
+          y=${{ matrix.year }}
+          last=$(cat scripts/backfill_request_recent.txt | grep '^end=' | cut -d= -f2)
+          first=$(cat scripts/backfill_request_recent.txt | grep '^start=' | cut -d= -f2)
+          for m in 01 02 03 04 05 06 07 08 09 10 11 12; do
+            ms="$y-$m-01"
+            [[ "$ms" < "${first:0:7}-01" ]] && continue
+            [[ "$ms" > "$last" ]] && continue
+            dest="data/lzh/$y$m.tar.age"
+            [[ -f "$dest" ]] && { echo "skip $dest"; continue; }
+            me=$(date -d "$ms +1 month -1 day" +%F)
+            [[ "$me" > "$last" ]] && me="$last"
+            s="$ms"; [[ "$s" < "$first" ]] && s="$first"
+            rm -rf tmp && python3 scripts/fetch_lzh.py "$s" "$me" tmp
+            ./scripts/pack_and_push.sh tmp "$dest" "data: $y$m"
+          done
