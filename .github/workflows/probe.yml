@@ -22,9 +22,9 @@ jobs:
             curl -sS -A 'Mozilla/5.0' --max-time 60 -w "%{http_code} %{size_download} %{time_total} $page\n" -o tmp/${page}_20250101_01_12.html "https://www.boatrace.jp/owpc/pc/race/$page?rno=12&jcd=01&hd=20250101" >> tmp/log.txt; sleep 2
           done
           cat tmp/log.txt
-          cp tmp/log.txt probe_result.txt
       - name: save
         run: |
           ./scripts/pack_and_push.sh tmp data/samples/pages_$(date +%s).tar.age "sample pages"
+          cp tmp/log.txt probe_result.txt
           git add probe_result.txt; git commit -m "probe result 3 [skip ci]" || true
           git pull -q --rebase origin boatrace-probe; git push -q origin HEAD:boatrace-probe
