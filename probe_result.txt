@@ -1,6 +1,8 @@
-  9.71s 200 47399 Mozilla/5.0  https://www1.mbrace.or.jp/od2/K/201707/k170701.lzh
- 10.58s 200 45519 Mozilla/5.0  https://www1.mbrace.or.jp/od2/K/201707/k170702.lzh
- 10.47s 200 39154 Mozilla/5.0  https://www1.mbrace.or.jp/od2/K/201707/k170703.lzh
- 10.18s 200 47399 Mozilla/5.0 https://www1.mbrace.or.jp/od2/K/201707/k170701.lzh
- 10.17s 200 45519 Mozilla/5.0 https://www1.mbrace.or.jp/od2/K/201707/k170702.lzh
-  8.17s 200 39154 Mozilla/5.0 https://www1.mbrace.or.jp/od2/K/201707/k170703.lzh
+200 46416 8.361467 odds3t
+200 39256 8.467308 odds3f
+200 39880 10.372956 odds2tf
+200 34735 10.540261 oddsk
+200 34801 10.396921 oddstf
+200 48338 10.383449 beforeinfo
+200 68492 10.285506 racelist
+200 58716 9.530110 raceresult
