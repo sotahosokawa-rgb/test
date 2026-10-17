@@ -1,0 +1,38 @@
+name: odds
+# 締切前オッズの記録。開催時間(おおむね 08:30〜21:00 JST)を3本のジョブに分ける。
+on:
+  schedule:
+    - cron: "17 23 * * *"   # 08:17 JST 〜 13:50
+    - cron: "41 4 * * *"    # 13:41 JST 〜 19:20
+    - cron: "07 10 * * *"   # 19:07 JST 〜 終了
+  push:
+    branches: [boatrace-probe]
+    paths: [scripts/odds_request.txt]
+permissions:
+  contents: write
+concurrency:
+  group: odds-${{ github.run_id }}
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age && pip install -q beautifulsoup4 lxml
+      - name: poll
+        run: |
+          h=$(TZ=Asia/Tokyo date +%H)
+          if   [ "$h" -lt 13 ]; then until=13:55
+          elif [ "$h" -lt 19 ]; then until=19:25
+          else until=23:59; fi
+          mkdir -p tmp
+          # 5時間40分で打ち切り(途中までの結果も保存する)
+          timeout 20400 python3 scripts/odds_poller.py tmp --until "$until" || true
+          ls -la tmp
+      - name: save
+        if: always()
+        run: |
+          [ -n "$(ls tmp/*.jsonl 2>/dev/null)" ] || exit 0
+          gzip -9 tmp/*.jsonl
+          d=$(TZ=Asia/Tokyo date +%Y%m%d); t=$(TZ=Asia/Tokyo date +%H%M)
+          ./scripts/pack_and_push.sh tmp "data/odds/$d/$t.tar.age" "odds $d $t"
