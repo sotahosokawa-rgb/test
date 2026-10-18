@@ -1,10 +1,12 @@
 name: odds
-# 締切前オッズの記録。開催時間(おおむね 08:30〜21:00 JST)を3本のジョブに分ける。
+# 締切前オッズの記録。開催時間(おおむね 08:30〜23:00 JST)を4本のジョブに分ける。
+# 定時実行は15〜30分遅れることがあるので、各ジョブの担当範囲を重ねている。
 on:
   schedule:
-    - cron: "17 23 * * *"   # 08:17 JST 〜 13:50
-    - cron: "41 4 * * *"    # 13:41 JST 〜 19:20
-    - cron: "07 10 * * *"   # 19:07 JST 〜 終了
+    - cron: "47 22 * * *"   # 07:47 JST 〜 12:20 締切分
+    - cron: "57 2 * * *"    # 11:57 JST 〜 16:20 締切分
+    - cron: "57 6 * * *"    # 15:57 JST 〜 20:20 締切分
+    - cron: "57 10 * * *"   # 19:57 JST 〜 終了
   push:
     branches: [boatrace-probe]
     paths: [scripts/odds_request.txt]
@@ -22,8 +24,9 @@ jobs:
       - name: poll
         run: |
           h=$(TZ=Asia/Tokyo date +%H)
-          if   [ "$h" -lt 13 ]; then until=13:55
-          elif [ "$h" -lt 19 ]; then until=19:25
+          if   [ "$h" -lt 11 ]; then until=12:20
+          elif [ "$h" -lt 15 ]; then until=16:20
+          elif [ "$h" -lt 19 ]; then until=20:20
           else until=23:59; fi
           mkdir -p tmp
           # 5時間40分で打ち切り(途中までの結果も保存する)
