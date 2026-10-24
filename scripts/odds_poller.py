@@ -104,6 +104,7 @@ def main():
             wait = (ft - now()).total_seconds()
             if wait > 0:
                 time.sleep(wait)
+            statuses = []
             for page in pages:
                 t0 = now()
                 h = get(BASE.format(page=page, rno=rno, jcd=jcd, hd=hd))
@@ -114,8 +115,15 @@ def main():
                     rec.update(r)
                 else:
                     rec["error"] = "fetch_failed"
+                statuses.append(rec.get("status"))
                 log(rec)
                 time.sleep(1)
+            # 締切後の取得で確定表示になっていなければ(発走遅延など)、5分後に最大3回まで取り直す
+            if tag.startswith("final") and any(st != "final" for st in statuses):
+                n = int(tag[5:] or 1)
+                if n < 4:
+                    with q_lock:
+                        heapq.heappush(sched, (now() + dt.timedelta(minutes=5), jcd, rno, T, f"final{n + 1}"))
 
     ths = [threading.Thread(target=worker, daemon=True) for _ in range(a.workers)]
     for t in ths:
