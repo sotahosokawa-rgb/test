@@ -1,0 +1,63 @@
+name: odds-backfill2
+# 過去の締切時オッズ(単勝・複勝・3連単など)。scripts/odds_backfill2_request.txt の期間を days 日単位で取得。
+# 1ページ約10秒。2ページ×3日(約1,000レース)で約5時間。1ジョブ6時間の上限に収める。
+on:
+  push:
+    branches: [boatrace-probe]
+    paths: [scripts/odds_backfill2_request.txt]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: odds-backfill2
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      chunks: ${{ steps.m.outputs.chunks }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        run: |
+          f=scripts/odds_backfill2_request.txt
+          s=$(grep '^start=' $f | cut -d= -f2); e=$(grep '^end=' $f | cut -d= -f2)
+          n=$(grep '^days=' $f | cut -d= -f2); o=$(grep '^out=' $f | cut -d= -f2)
+          cs=(); cur="$s"
+          while [[ "$cur" < "$e" || "$cur" == "$e" ]]; do
+            w=$(date -d "$cur" +%Y%m%d)
+            [[ -f "$o/$w.tar.age" ]] || cs+=("\"$w\"")
+            cur=$(date -d "$cur +$n day" +%F)
+          done
+          echo "chunks=[$(IFS=,; echo "${cs[*]}")]" >> "$GITHUB_OUTPUT"
+  chunk:
+    needs: plan
+    if: needs.plan.outputs.chunks != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      max-parallel: 4
+      fail-fast: false
+      matrix:
+        w: ${{ fromJson(needs.plan.outputs.chunks) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age && pip install -q beautifulsoup4 lxml
+      - name: fetch
+        run: |
+          f=scripts/odds_backfill2_request.txt
+          w=${{ matrix.w }}
+          n=$(grep '^days=' $f | cut -d= -f2); pages=$(grep '^pages=' $f | cut -d= -f2)
+          s="${w:0:4}-${w:4:2}-${w:6:2}"; e=$(date -d "$s +$((n - 1)) day" +%F)
+          lim=$(grep '^end=' $f | cut -d= -f2)
+          [[ "$e" > "$lim" ]] && e="$lim"
+          mkdir -p tmp
+          timeout 20700 python3 scripts/odds_backfill.py "$s" "$e" tmp --pages "$pages" && touch tmp/COMPLETE || true
+      - name: save
+        if: always()
+        run: |
+          f=scripts/odds_backfill2_request.txt
+          w=${{ matrix.w }}; o=$(grep '^out=' $f | cut -d= -f2)
+          [ -n "$(ls tmp/*.jsonl 2>/dev/null)" ] || exit 0
+          nrow=$(cat tmp/*.jsonl | wc -l)
+          gzip -9 tmp/*.jsonl
+          if [ -f tmp/COMPLETE ]; then dest="$o/$w.tar.age"; else dest="$o/part/$w-$(date +%s).tar.age"; fi
+          ./scripts/pack_and_push.sh tmp "$dest" "odds_final2 $w ($nrow rows)"

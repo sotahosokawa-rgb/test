@@ -1,0 +1,5 @@
+start=2023-10-01
+end=2024-09-30
+pages=oddstf,odds3t
+days=3
+out=data/odds_final_tf3t
