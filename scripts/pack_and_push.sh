@@ -10,6 +10,7 @@ git add "$dest"
 git commit -q -m "$msg [skip ci]" || { echo "nothing to commit"; exit 0; }
 for i in 1 2 3 4 5; do
   git pull -q --rebase origin "${GITHUB_REF_NAME}" && git push -q origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+  git rebase --abort 2>/dev/null || true
   sleep $((i * 7))
 done
 exit 1

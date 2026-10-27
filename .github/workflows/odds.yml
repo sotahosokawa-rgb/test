@@ -29,6 +29,9 @@ jobs:
           elif [ "$h" -lt 19 ]; then until=21:00
           else until=23:59; fi
           mkdir -p tmp
+          # 保存先の名前はジョブ開始時の日付・時刻と run id で決める(同時刻に保存した別ジョブとの衝突を防ぐ)
+          echo "ODDS_D=$(TZ=Asia/Tokyo date +%Y%m%d)" >> "$GITHUB_ENV"
+          echo "ODDS_T=$(TZ=Asia/Tokyo date +%H%M)" >> "$GITHUB_ENV"
           # 5時間40分で打ち切り(途中までの結果も保存する)
           timeout 20400 python3 scripts/odds_poller.py tmp --until "$until" || true
           ls -la tmp
@@ -37,5 +40,5 @@ jobs:
         run: |
           [ -n "$(ls tmp/*.jsonl 2>/dev/null)" ] || exit 0
           gzip -9 tmp/*.jsonl
-          d=$(TZ=Asia/Tokyo date +%Y%m%d); t=$(TZ=Asia/Tokyo date +%H%M)
-          ./scripts/pack_and_push.sh tmp "data/odds/$d/$t.tar.age" "odds $d $t"
+          d=${ODDS_D:-$(TZ=Asia/Tokyo date +%Y%m%d)}; t=${ODDS_T:-$(TZ=Asia/Tokyo date +%H%M)}
+          ./scripts/pack_and_push.sh tmp "data/odds/$d/${t}_${GITHUB_RUN_ID}.tar.age" "odds $d $t"
