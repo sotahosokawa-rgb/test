@@ -1,0 +1,25 @@
+name: odds-watchdog
+# 定時実行が遅れて朝の odds ジョブが始まっていないときに、手動起動で補う。
+on:
+  schedule:
+    - cron: "12 23 * * *"   # 08:12 JST
+    - cron: "42 23 * * *"   # 08:42 JST
+    - cron: "27 3 * * *"    # 12:27 JST
+    - cron: "27 7 * * *"    # 16:27 JST
+    - cron: "27 11 * * *"   # 20:27 JST
+permissions:
+  actions: write
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # 直近3時間に odds ジョブが始まっていなければ起動する
+          since=$(date -u -d '-3 hours' +%FT%TZ)
+          n=$(gh run list --workflow odds.yml --limit 20 --json createdAt -q "[.[]|select(.createdAt >= \"$since\")]|length")
+          echo "odds runs since $since: $n"
+          if [ "$n" -eq 0 ]; then gh workflow run odds.yml --ref "${GITHUB_REF_NAME}"; echo started; fi
