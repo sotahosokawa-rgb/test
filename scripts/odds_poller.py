@@ -1,12 +1,12 @@
 """締切前オッズのスナップショット収集。
 
-使い方: python odds_poller.py OUTDIR [--until HH:MM] [--offsets 10,5,2] [--workers 2]
+使い方: python odds_poller.py OUTDIR [--from HH:MM] [--until HH:MM] [--offsets 10,5,2] [--workers 2]
 - 当日(JST)の開催場を index ページから取得し、各場の締切予定時刻を odds2tf(1R) から取得
 - 各レースの締切 T に対し T-10, T-5, T-2 分(既定)と T+4 分(締切時オッズ)に
   odds2tf(2連単/2連複), oddstf(単勝/複勝), odds3t(3連単) を取得
 - 1ページ取得は約10秒。同時接続は workers (既定2)
 - 生HTMLは保存せず、パースしたオッズを JSON Lines で OUTDIR/odds_YYYYMMDD.jsonl に追記
-- --until を過ぎた締切のレースは扱わない(ジョブの実行時間制限 6 時間に合わせて分割実行するため)
+- 締切が --from より前、または --until より後のレースは扱わない(ジョブを6時間以内に分けてつなぐため)
 """
 from __future__ import annotations
 
@@ -52,6 +52,7 @@ def venues(hd):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
+    ap.add_argument("--from", dest="frm", default="00:00")
     ap.add_argument("--until", default="23:59")
     ap.add_argument("--offsets", default="10,5,2")
     ap.add_argument("--final-after", type=int, default=4)
@@ -61,6 +62,7 @@ def main():
     out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
     today = now().date(); hd = today.strftime("%Y%m%d")
     until = dt.datetime.combine(today, dt.time.fromisoformat(a.until), JST)
+    frm = dt.datetime.combine(today, dt.time.fromisoformat(a.frm), JST)
     pages = a.pages.split(",")
     offsets = [int(x) for x in a.offsets.split(",")]
     fout = (out / f"odds_{hd}.jsonl").open("a", encoding="utf-8")
@@ -82,7 +84,7 @@ def main():
         log(dict(kind="schedule", hd=hd, jcd=jcd, deadlines=dls, fetched=now().isoformat()))
         for i, t in enumerate(dls, start=1):
             T = dt.datetime.combine(today, dt.time.fromisoformat(t if len(t) == 5 else "0" + t), JST)
-            if T > until or T + dt.timedelta(minutes=a.final_after) < now():
+            if T > until or (a.frm != "00:00" and T <= frm) or T + dt.timedelta(minutes=a.final_after) < now():
                 continue
             for off in offsets:
                 ft = T - dt.timedelta(minutes=off)
@@ -90,7 +92,7 @@ def main():
                     sched.append((ft, jcd, i, T, f"T-{off}"))
             sched.append((T + dt.timedelta(minutes=a.final_after), jcd, i, T, "final"))
     heapq.heapify(sched)
-    print(f"{hd}: venues={len(jcds)} snapshots={len(sched)} until={a.until}", flush=True)
+    print(f"{hd}: venues={len(jcds)} snapshots={len(sched)} from={a.frm} until={a.until}", flush=True)
 
     # 2) 実行
     q_lock = threading.Lock()

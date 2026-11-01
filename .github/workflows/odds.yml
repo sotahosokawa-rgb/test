@@ -1,43 +1,81 @@
 name: odds
-# 締切前オッズの記録。開催時間(おおむね 08:30〜23:00 JST)を4本のジョブに分ける。
-# 定時実行は15〜30分遅れることがあるので、各ジョブの担当範囲を重ねている。
+# 締切前オッズの記録。GitHub の定時実行は数時間遅れることがあるので、ジョブが自分の次のジョブを
+# 手動起動(workflow_dispatch)してつなぐ。1本のジョブは締切 from〜until(最大5時間)のレースを担当し、
+# until の15分前に次のジョブを起動する。その日の最後のジョブは、翌朝 07:40 JST に始まるジョブを起動する
+# (待ちが長いときは待機だけのジョブを挟む)。鎖が切れたときは odds-watchdog が起動し直す。
 on:
-  schedule:
-    - cron: "47 22 * * *"   # 07:47 JST 〜 13:00 締切分
-    - cron: "57 2 * * *"    # 11:57 JST 〜 17:00 締切分
-    - cron: "57 6 * * *"    # 15:57 JST 〜 21:00 締切分
-    - cron: "57 10 * * *"   # 19:57 JST 〜 終了
-  push:
-    branches: [boatrace-probe]
-    paths: [scripts/odds_request.txt]
   workflow_dispatch:
+    inputs:
+      start_at:
+        description: "この時刻(JST, YYYY-MM-DDTHH:MM)まで待ってから開始。空なら即開始"
+        required: false
+        default: ""
+      from:
+        description: "担当する締切の下限(HH:MM, JST)。空ならその時点から"
+        required: false
+        default: ""
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: odds-${{ github.run_id }}
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      START_AT: ${{ inputs.start_at }}
+      FROM: ${{ inputs.from }}
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age && pip install -q beautifulsoup4 lxml
-      - name: poll
+      - name: wait
+        id: wait
         run: |
-          h=$(TZ=Asia/Tokyo date +%H)
-          if   [ "$h" -lt 11 ]; then until=13:00
-          elif [ "$h" -lt 15 ]; then until=17:00
-          elif [ "$h" -lt 19 ]; then until=21:00
-          else until=23:59; fi
-          mkdir -p tmp
-          # 保存先の名前はジョブ開始時の日付・時刻と run id で決める(同時刻に保存した別ジョブとの衝突を防ぐ)
+          go=1
+          if [ -n "$START_AT" ]; then
+            tgt=$(TZ=Asia/Tokyo date -d "$START_AT" +%s); w=$(( tgt - $(date +%s) ))
+            if [ "$w" -gt 900 ]; then
+              # 15分以上先なら、待機だけして(最長5時間40分)同じ指定で次のジョブを起動する。
+              # 取得は開始時刻の5分前に起動されたジョブが行う(1ジョブ6時間の上限に収めるため)
+              s=$(( w - 300 )); [ "$s" -gt 20400 ] && s=20400
+              sleep "$s"
+              for i in 1 2 3 4 5; do gh workflow run odds.yml --ref "$GITHUB_REF_NAME" -f start_at="$START_AT" -f from="$FROM" && break; sleep 30; done
+              go=0
+            elif [ "$w" -gt 0 ]; then
+              sleep "$w"
+            fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+      - if: steps.wait.outputs.go == '1'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age && pip install -q beautifulsoup4 lxml
+      - name: poll
+        if: steps.wait.outputs.go == '1'
+        run: |
+          now=$(date +%s); today=$(TZ=Asia/Tokyo date +%F)
+          frm=${FROM:-$(TZ=Asia/Tokyo date +%H:%M)}
+          # 担当範囲: 締切 frm〜until。until は開始から5時間後(日付をまたぐなら 23:59)
+          end=$(( now + 18000 ))
+          if [ "$(TZ=Asia/Tokyo date -d @$end +%F)" != "$today" ]; then until=23:59; else until=$(TZ=Asia/Tokyo date -d @$end +%H:%M); fi
           echo "ODDS_D=$(TZ=Asia/Tokyo date +%Y%m%d)" >> "$GITHUB_ENV"
           echo "ODDS_T=$(TZ=Asia/Tokyo date +%H%M)" >> "$GITHUB_ENV"
-          # 5時間40分で打ち切り(途中までの結果も保存する)
-          timeout 20400 python3 scripts/odds_poller.py tmp --until "$until" || true
-          ls -la tmp
+          echo "from=$frm until=$until"
+          # 次のジョブの起動予約(until の15分前)。最後のジョブは翌朝 07:40 開始のジョブを起動する
+          if [ "$until" = "23:59" ]; then
+            nxt_start="$(TZ=Asia/Tokyo date -d "$today +1 day" +%F)T07:40"; nxt_from="00:00"; at=$(( now + 60 ))
+          else
+            nxt_start=""; nxt_from="$until"; at=$(( $(TZ=Asia/Tokyo date -d "$today $until" +%s) - 900 ))
+          fi
+          ( d=$(( at - $(date +%s) )); [ "$d" -gt 0 ] && sleep "$d"
+            for i in 1 2 3 4 5; do gh workflow run odds.yml --ref "$GITHUB_REF_NAME" -f start_at="$nxt_start" -f from="$nxt_from" && break; sleep 30; done
+            echo "next job requested: start_at=$nxt_start from=$nxt_from" ) > tmp_next.log 2>&1 &
+          mkdir -p tmp
+          timeout 19500 python3 scripts/odds_poller.py tmp --from "$frm" --until "$until" || true
+          # 次の起動予約が終わるまで待つ(最後のジョブ以外は until 直前に終わる)
+          wait; cat tmp_next.log; ls -la tmp
       - name: save
-        if: always()
+        if: always() && steps.wait.outputs.go == '1'
         run: |
           [ -n "$(ls tmp/*.jsonl 2>/dev/null)" ] || exit 0
           gzip -9 tmp/*.jsonl

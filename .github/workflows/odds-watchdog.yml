@@ -1,12 +1,16 @@
 name: odds-watchdog
-# 定時実行が遅れて朝の odds ジョブが始まっていないときに、手動起動で補う。
+# odds ジョブの鎖(ジョブが次のジョブを起動する)が切れていたら起動し直す。
+# 実行中・待機中の odds ジョブが1つもないときだけ起動するので、鎖が二重にならない。
 on:
   schedule:
-    - cron: "12 23 * * *"   # 08:12 JST
+    - cron: "12 22 * * *"   # 07:12 JST
     - cron: "42 23 * * *"   # 08:42 JST
-    - cron: "27 3 * * *"    # 12:27 JST
-    - cron: "27 7 * * *"    # 16:27 JST
+    - cron: "27 2 * * *"    # 11:27 JST
+    - cron: "27 5 * * *"    # 14:27 JST
+    - cron: "27 8 * * *"    # 17:27 JST
     - cron: "27 11 * * *"   # 20:27 JST
+    - cron: "27 15 * * *"   # 00:27 JST
+  workflow_dispatch:
 permissions:
   actions: write
   contents: read
@@ -18,8 +22,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          # 直近3時間に odds ジョブが始まっていなければ起動する
-          since=$(date -u -d '-3 hours' +%FT%TZ)
-          n=$(gh run list --workflow odds.yml --limit 20 --json createdAt -q "[.[]|select(.createdAt >= \"$since\")]|length")
-          echo "odds runs since $since: $n"
-          if [ "$n" -eq 0 ]; then gh workflow run odds.yml --ref "${GITHUB_REF_NAME}"; echo started; fi
+          n=$(gh run list --workflow odds.yml --limit 30 --json status -q '[.[]|select(.status!="completed")]|length')
+          echo "active odds runs: $n"
+          if [ "$n" -eq 0 ]; then
+            h=$(TZ=Asia/Tokyo date +%H)
+            if [ "$h" -ge 7 ] && [ "$h" -lt 23 ]; then
+              gh workflow run odds.yml --ref "${GITHUB_REF_NAME}"
+            else
+              gh workflow run odds.yml --ref "${GITHUB_REF_NAME}" -f start_at="$(TZ=Asia/Tokyo date -d "$( [ "$h" -ge 23 ] && echo tomorrow || echo today )" +%F)T07:40" -f from=00:00
+            fi
+            echo started
+          fi
