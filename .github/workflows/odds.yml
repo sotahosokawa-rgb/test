@@ -71,7 +71,7 @@ jobs:
             for i in 1 2 3 4 5; do gh workflow run odds.yml --ref "$GITHUB_REF_NAME" -f start_at="$nxt_start" -f from="$nxt_from" && break; sleep 30; done
             echo "next job requested: start_at=$nxt_start from=$nxt_from" ) > tmp_next.log 2>&1 &
           mkdir -p tmp
-          timeout 19500 python3 scripts/odds_poller.py tmp --from "$frm" --until "$until" || true
+          timeout 19500 python3 scripts/odds_poller.py tmp --offsets 10,5,2,1 --from "$frm" --until "$until" || true
           # 次の起動予約が終わるまで待つ(最後のジョブ以外は until 直前に終わる)
           wait; cat tmp_next.log; ls -la tmp
       - name: save
